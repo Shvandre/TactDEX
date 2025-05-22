@@ -1,4 +1,4 @@
 yarn fmt
-yarn tact-fmt
+yarn tact-fmt --write ./
 yarn deduplicate
 yarn lint-staged

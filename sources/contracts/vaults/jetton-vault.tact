@@ -7,6 +7,7 @@ import "./ton-vault.tact";
 import "./proofs/check-proof";
 import "./proofs/tep-89-proofer";
 import "../core/liquidity-deposit";
+import "../utils/utils";
 
 // TEP-74 JettonNotify, but with forwardPayload serialized as expected fields
 message(0x7362d09c) JettonNotifyWithActionRequest {
@@ -48,16 +49,56 @@ contract JettonVault(
     receive(msg: JettonNotifyWithActionRequest) {
         if (self.jettonWallet == null) {
             // This function proofs that jetton wallet is valid
-            // This function throws if proof is invalid
-            checkProof(self.jettonMaster, msg.proofType, msg.proof, msg.toCell());
+            // This function throws if proof is invalid and tries to send Jettons back
+            let proofCheckRes = checkProof(self.jettonMaster, msg.proofType, msg.proof, msg.toCell());
+
+            // Proof is not valid, or not supported, let's try to send jettons back
+            if (!proofCheckRes) {
+                message(MessageParameters {
+                    mode: SendRemainingValue | SendIgnoreErrors,
+                    body: SendViaJettonTransfer {
+                        queryId: msg.queryId,
+                        amount: msg.amount,
+                        destination: msg.sender,
+                        responseDestination: msg.sender,
+                        customPayload: null,
+                        forwardTonAmount: 0,
+                        forwardPayload: sliceWithOneZeroBit(),
+                    }.toCell(),
+                    value: 0,
+                    to: sender(),
+                    bounce: true,
+                });
+                commit();
+                require(false, "JettonVault: Proof is invalid");
+            }
             self.jettonWallet = sender();
+
             // There is no sense to bounce, as Jettons won't be sent back
             // However, we can save jettonWallet address to the storage, as the proof succeeded
-
             saveState(self.jettonWallet, self.jettonMaster);
             commit();
         }
-        require(sender() == self.jettonWallet, "JettonVault: Sender must be jetton wallet");
+        // Maybe someone messed up with address, so let's try to send jettons back
+        if (sender() != self.jettonWallet) {
+            message(MessageParameters {
+                mode: SendRemainingValue | SendIgnoreErrors,
+                body: SendViaJettonTransfer {
+                    queryId: msg.queryId,
+                    amount: msg.amount,
+                    destination: msg.sender,
+                    responseDestination: msg.sender,
+                    customPayload: null,
+                    forwardTonAmount: 0,
+                    forwardPayload: sliceWithOneZeroBit(),
+                }.toCell(),
+                value: 0,
+                to: sender(),
+                bounce: true,
+            });
+            commit();
+            require(false, "JettonVault: Sender must be jetton wallet");
+        }
         actionHandler(msg);
     }
 

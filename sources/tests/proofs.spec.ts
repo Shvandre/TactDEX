@@ -134,4 +134,125 @@ describe("Proofs", () => {
         )
         expect(await jettonVaultInstance.getInited()).toBe(false)
     })
+    test("Jettons are returned if proof type is incorrect", async () => {
+        const blockchain = await Blockchain.create()
+        const vaultSetup = await createJettonVault(blockchain)
+
+        const _ = await vaultSetup.deploy()
+        const mockActionPayload = beginCell()
+            .storeStringTail("Random action that does not mean anything")
+            .endCell()
+
+        const sendNotifyWithNoProof = await vaultSetup.treasury.transfer(
+            vaultSetup.vault.address,
+            toNano(0.5),
+            createJettonVaultMessage(
+                // We can use any Jetton Vault opcode here because we don't need an actual operation here
+                LPDepositPartOpcode,
+                mockActionPayload,
+                {
+                    proofType: 0n, // No proof attached
+                },
+            ),
+        )
+
+        const toVaultTx = flattenTransaction(
+            findTransactionRequired(sendNotifyWithNoProof.transactions, {
+                to: vaultSetup.vault.address,
+                op: JettonVault.opcodes.JettonNotifyWithActionRequest,
+                success: true, // Because commit was called
+                exitCode: JettonVault.errors["JettonVault: Proof is invalid"],
+            }),
+        )
+
+        expect(sendNotifyWithNoProof.transactions).toHaveTransaction({
+            from: vaultSetup.vault.address,
+            to: toVaultTx.from,
+            op: JettonVault.opcodes.JettonTransfer,
+            success: true,
+        })
+
+        expect(await vaultSetup.isInited()).toBe(false)
+    })
+
+    test("Jettons are returned if sent to wrong vault", async () => {
+        const blockchain = await Blockchain.create()
+        // Create and set up a correct jetton vault
+        const vaultSetup = await createJettonVault(blockchain)
+        const _ = await vaultSetup.deploy()
+
+        // Create a different jetton (wrong one) for testing
+        const wrongJetton = await createJetton(blockchain)
+
+        // Get the initial balance of the wrong jetton wallet
+        const initialWrongJettonBalance = await wrongJetton.wallet.getJettonBalance()
+
+        // Create a mock payload to use with the transfer
+        const mockPayload = beginCell()
+            .store(
+                storeLPDepositPart({
+                    $$type: "LPDepositPart",
+                    liquidityDepositContract: randomAddress(0), // Mock LP contract address
+                    additionalParams: {
+                        $$type: "AdditionalParams",
+                        minAmountToDeposit: 0n,
+                        lpTimeout: 0n,
+                        payloadOnSuccess: null,
+                        payloadOnFailure: null,
+                    },
+                }),
+            )
+            .endCell()
+
+        // Number of jettons to send to the wrong vault
+        const amountToSend = toNano(0.5)
+
+        // First, we need to initialize the vault with the correct jettons
+        const _initVault = await vaultSetup.treasury.transfer(
+            vaultSetup.vault.address,
+            amountToSend,
+            createJettonVaultMessage(
+                // We can use any Jetton Vault opcode here because we don't need an actual operation here
+                LPDepositPartOpcode,
+                mockPayload,
+                {
+                    proofType: PROOF_TEP89,
+                },
+            ),
+        )
+        expect(await vaultSetup.isInited()).toBeTruthy()
+
+        // Send wrong Jetton to the vault
+        const sendJettonsToWrongVault = await wrongJetton.transfer(
+            vaultSetup.vault.address,
+            amountToSend,
+            createJettonVaultMessage(LPDepositPartOpcode, mockPayload, {
+                proofType: PROOF_TEP89,
+            }),
+        )
+
+        // Verify that the transaction to the vault has occurred but failed due to the wrong jetton
+        const toVaultTx = flattenTransaction(
+            findTransactionRequired(sendJettonsToWrongVault.transactions, {
+                to: vaultSetup.vault.address,
+                op: JettonVault.opcodes.JettonNotifyWithActionRequest,
+                success: true, // Because commit was called
+                exitCode: JettonVault.errors["JettonVault: Sender must be jetton wallet"],
+            }),
+        )
+
+        // Check that the jettons were sent back to the original wallet
+        expect(sendJettonsToWrongVault.transactions).toHaveTransaction({
+            from: vaultSetup.vault.address,
+            to: toVaultTx.from,
+            op: JettonVault.opcodes.JettonTransfer,
+            success: true,
+        })
+
+        expect(await vaultSetup.isInited()).toBeTruthy()
+
+        // Verify that the balance of the wrong jetton wallet is unchanged (jettons returned)
+        const finalWrongJettonBalance = await wrongJetton.wallet.getJettonBalance()
+        expect(finalWrongJettonBalance).toEqual(initialWrongJettonBalance)
+    })
 })

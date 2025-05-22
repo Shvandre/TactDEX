@@ -14,7 +14,7 @@ const PROOF_STATE_INIT: Int = 2;
 const PROOF_STATE_TO_THE_BLOCK: Int = 3;
 const PROOF_JETTON_BURN: Int = 4;
 
-inline fun checkProof(jettonMaster: Address, proofType: Int, proof: Slice, msgCell: Cell) {
+inline fun checkProof(jettonMaster: Address, proofType: Int, proof: Slice, msgCell: Cell): Bool {
     if (proofType == PROOF_TEP89) {
         let prooferStateInit = initOf TEP89Proofer(
             jettonMaster,
@@ -48,14 +48,13 @@ inline fun checkProof(jettonMaster: Address, proofType: Int, proof: Slice, msgCe
             }) == jettonMaster,
             "JettonVault: StateInit proof is invalid",
         );
-        return;
+        return true;
     } else if (proofType == PROOF_STATE_TO_THE_BLOCK) {
         require(false, "JettonVault: State proof is not supported");
-        return;
+        return true;
     } else if (proofType == PROOF_JETTON_BURN) {
         require(false, "JettonVault: Burn proof is not supported");
-        return;
+        return true;
     }
-
-    require(false, "JettonVault: Invalid proof type");
+    return false;
 }
